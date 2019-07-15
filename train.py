@@ -13,6 +13,8 @@ from utils.lr_scheduler import LR_Scheduler
 from utils.saver import Saver
 from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
+from utils.LossWithUncertainty import LossWithUncertainty
+from dataloaders.utils import decode_segmap
 
 class Trainer(object):
     def __init__(self, args):
@@ -27,10 +29,12 @@ class Trainer(object):
         
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
-        self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
+        self.train_loader, self.val_loader, self.test_loader, self.nclass_pixel, self.nclass_scene = make_data_loader(args, **kwargs)
 
+        
+        self.saved_index = 0
         # Define network
-        model = ERFNet(multitask = self.args.multitask)
+        model = ERFNet(num_classes_pixel = self.nclass_pixel, num_classes_scene = self.nclass_scene,multitask = self.args.multitask)
         # DeepLab(num_classes=self.nclass,
         #                 backbone=args.backbone,
         #                 output_stride=args.out_stride,
@@ -51,18 +55,24 @@ class Trainer(object):
             if os.path.isfile(classes_weights_path):
                 weight = np.load(classes_weights_path)
             else:
-                weight = calculate_weigths_labels(args.dataset, self.train_loader, self.nclass)
+                weight = calculate_weigths_labels(args.dataset, self.train_loader, self.nclass_pixel)
             weight = torch.from_numpy(weight.astype(np.float32))
         else:
             weight = None
         self.criterion = SegmentationLosses(weight=weight, cuda=args.cuda).build_loss(mode=args.loss_type)
+
+
+        self.criterion_uncertainty = LossWithUncertainty().cuda() #########################
+
         self.model, self.optimizer = model, optimizer
         
         # Define Evaluator
-        self.evaluator = Evaluator(self.nclass)
+        self.evaluator = Evaluator(self.nclass_pixel)
         # Define lr scheduler
         self.scheduler = LR_Scheduler(args.lr_scheduler, args.lr,
                                             args.epochs, len(self.train_loader))
+
+        
 
         # Using cuda
         if args.cuda:
@@ -103,10 +113,14 @@ class Trainer(object):
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
             output, output_road = self.model(image)
+
             if output_road != None:
-                pass
+                pass  #need cross-entropy loss for scene classification
+
             loss = self.criterion(output, target)
+            loss = self.criterion_uncertainty(loss) ################################
             loss.backward()
+
             self.optimizer.step()
             train_loss += loss.item()
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
@@ -129,7 +143,28 @@ class Trainer(object):
                 'state_dict': self.model.module.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
+
             }, is_best)
+
+    def write_val(self):
+        self.model.eval()
+        self.evaluator.reset()
+        tbar = tqdm(self.val_loader, desc='\r')
+        for i, sample in enumerate(tbar):
+            image, target = sample['image'], sample['label']
+            if self.args.cuda:
+                image, target = image.cuda(), target.cuda()
+            with torch.no_grad():
+                output, output_road = self.model(image)
+            if output_road != None:
+                pass
+
+            label_masks = torch.max(output, 1)[1].detach().cpu().numpy()
+            targets = target.detach().cpu().numpy()
+            #print(targets.shape) 
+            for idx, label_mask in enumerate(label_masks):     
+                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = "/workspace/bdd100k/val_results/%(idx)05d.png" % {'idx':self.saved_index}, target = targets[idx])
+                self.saved_index += 1
 
 
     def validation(self, epoch):
@@ -142,8 +177,13 @@ class Trainer(object):
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
-                output = self.model(image)
+                output, output_road = self.model(image)
+            if output_road != None:
+                pass
+
             loss = self.criterion(output, target)
+            loss = self.criterion_uncertainty(loss) ################################
+  
             test_loss += loss.item()
             tbar.set_description('Test loss: %.3f' % (test_loss / (i + 1)))
             pred = output.data.cpu().numpy()
@@ -171,6 +211,7 @@ class Trainer(object):
         if new_pred > self.best_pred:
             is_best = True
             self.best_pred = new_pred
+
             self.saver.save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': self.model.module.state_dict(),
@@ -204,6 +245,7 @@ def main():
                         help='output image width')
     parser.add_argument('--output-h', type=int, default=480,
                         help='output image height')
+    
     parser.add_argument('--multitask', type=bool, default=False,
                          help='whether to do multi-task (default: auto)')
     # parser.add_argument('--sync-bn', type=bool, default=None,
@@ -235,7 +277,7 @@ def main():
     parser.add_argument('--momentum', type=float, default=0.9,
                         metavar='M', help='momentum (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=1e-4,
-                        metavar='M', help='w-decay (default: 5e-4)')
+                        metavar='M', help='w-decay (default: 1e-4)')
     parser.add_argument('--nesterov', action='store_true', default=False,
                         help='whether use nesterov (default: False)')
     # cuda, seed and logging
@@ -259,6 +301,9 @@ def main():
                         help='evaluuation interval (default: 1)')
     parser.add_argument('--no-val', action='store_true', default=False,
                         help='skip validation during training')
+    parser.add_argument('--write-val', action='store_true', default=False,
+                        help='store val rgb results')
+
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -299,14 +344,17 @@ def main():
     print(args)
     torch.manual_seed(args.seed)
     trainer = Trainer(args)
-    print('Starting Epoch:', trainer.args.start_epoch)
-    print('Total Epoches:', trainer.args.epochs)
-    for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
-        trainer.training(epoch)
-        if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
-            trainer.validation(epoch)
+    if not args.write_val:
+        print('Starting Epoch:', trainer.args.start_epoch)
+        print('Total Epoches:', trainer.args.epochs)
+        for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
+            trainer.training(epoch)
+            if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
+                trainer.validation(epoch)
 
-    trainer.writer.close()
+        trainer.writer.close()
+    else:
+        trainer.write_val()
 
 if __name__ == "__main__":
    main()

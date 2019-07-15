@@ -61,7 +61,7 @@ class non_bottleneck_1d (nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_classes, multitask):
+    def __init__(self, num_classes_scene, multitask):
         super(Encoder, self).__init__()
         self.multitask = multitask
 
@@ -99,13 +99,13 @@ class Encoder(nn.Module):
             #self.road_layers.append(non_bottleneck_1d(512, 0.3, 1))
 
             self.road_linear_1 = nn.Linear(512 * 3 * 5, 1024)
-            self.output_road = nn.Linear(1024, 4)
+            self.output_road = nn.Linear(1024, num_classes_scene)
 
         #Only in encoder mode:
         #self.output_conv = nn.Conv2d(128, num_classes, 1, stride=1, padding=0, bias=True)
 
     def forward(self, input):
-        bs = input.size()[0]
+        bs = input.size()[0] # need to fix the bs later
         output = self.initial_block(input)
 
         for layer in self.layers:
@@ -164,14 +164,13 @@ class Decoder (nn.Module):
 
 #ERFNet
 class ERFNet(nn.Module):
-    def __init__(self, num_classes=3, encoder=None, multitask = False):  #use encoder to pass pretrained encoder
+    def __init__(self, num_classes_pixel=3, num_classes_scene = 4, encoder=None, multitask = False):  #use encoder to pass pretrained encoder
         super(ERFNet, self).__init__()
-        self.multitask = multitask
         if (encoder == None):
-            self.encoder = Encoder(num_classes, self.multitask)
+            self.encoder = Encoder(num_classes_scene, multitask)
         else:
             self.encoder = encoder
-        self.decoder = Decoder(num_classes)
+        self.decoder = Decoder(num_classes_pixel)
 
     def forward(self, input):
         output, output_road = self.encoder(input) 

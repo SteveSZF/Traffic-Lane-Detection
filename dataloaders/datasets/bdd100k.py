@@ -11,8 +11,8 @@ class BDDSegmentation(Dataset):
     """
     PascalVoc dataset
     """
-    NUM_CLASSES = 3
-
+    NUM_CLASSES_PIXEL = 3
+    NUM_CLASSES_SCENE = 4
     def __init__(self,
                  args,
                  base_dir=Path.db_root_dir('bdd100k'),
@@ -39,10 +39,11 @@ class BDDSegmentation(Dataset):
             self.split = split
 
         self.args = args
-        if split == 'train':
-            _splits_dir = os.path.join(self._base_dir)
-        else:
-            _splits_dir = os.path.join(self._base_dir)
+        _splits_dir = os.path.join(self._base_dir)
+        # if split == 'train':
+        #     _splits_dir = os.path.join(self._base_dir)
+        # else:
+        #     _splits_dir = os.path.join(self._base_dir)
 
         self.im_ids = []
         self.images = []

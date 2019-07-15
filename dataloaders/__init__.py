@@ -7,12 +7,14 @@ def make_data_loader(args, **kwargs):
         train_set = bdd100k.BDDSegmentation(args, split='train')
         val_set = bdd100k.BDDSegmentation(args, split='val')
     
-        num_class = train_set.NUM_CLASSES
+        num_classes_pixel = train_set.NUM_CLASSES_PIXEL
+        num_classes_scene = train_set.NUM_CLASSES_SCENE
+
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, **kwargs)
         test_loader = None
 
-        return train_loader, val_loader, test_loader, num_class
+        return train_loader, val_loader, test_loader, num_classes_pixel, num_classes_scene
 
     else:
         raise NotImplementedError

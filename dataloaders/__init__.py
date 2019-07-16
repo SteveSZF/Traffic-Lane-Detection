@@ -1,9 +1,18 @@
-from dataloaders.datasets import bdd100k
+from dataloaders.datasets import bdd100k, video
 from torch.utils.data import DataLoader
 
 def make_data_loader(args, **kwargs):
+    if isinstance(args.video, str):
+        test_set = video.VIDEOSegmentation(args)
+    
+        num_classes_pixel = test_set.NUM_CLASSES_PIXEL
+        num_classes_scene = test_set.NUM_CLASSES_SCENE
 
-    if args.dataset == 'bdd100k':
+        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, **kwargs)
+        return test_loader, num_classes_pixel, num_classes_scene
+
+
+    elif args.dataset == 'bdd100k':
         train_set = bdd100k.BDDSegmentation(args, split='train')
         val_set = bdd100k.BDDSegmentation(args, split='val')
     

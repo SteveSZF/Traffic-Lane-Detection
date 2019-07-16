@@ -163,7 +163,7 @@ class Trainer(object):
             targets = target.detach().cpu().numpy()
             #print(targets.shape) 
             for idx, label_mask in enumerate(label_masks):     
-                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = "/workspace/bdd100k/val_results/%(idx)05d.png" % {'idx':self.saved_index}, target = targets[idx])
+                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = self.args.saved_path + "/%(idx)05d.png" % {'idx':self.saved_index}, target = targets[idx])
                 self.saved_index += 1
 
 
@@ -303,8 +303,10 @@ def main():
                         help='skip validation during training')
     parser.add_argument('--write-val', action='store_true', default=False,
                         help='store val rgb results')
-
-
+    parser.add_argument('--video', type=str, default=None,
+                        help='video segmentation only for write-val')
+    parser.add_argument('--saved-path', type=str, default=None,
+                        help='path for saving segmentation result')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     if args.cuda:

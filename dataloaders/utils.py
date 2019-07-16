@@ -11,7 +11,7 @@ def decode_seg_map_sequence(label_masks, dataset='pascal'):
     return rgb_masks
 
 
-def decode_segmap(label_mask, dataset, plot=False, saved_path = None, target = None):
+def decode_segmap(label_mask, dataset, plot=False, saved_path = None, target = None, image = None):
     """Decode segmentation class labels into a color image
     Args:
         label_mask (np.ndarray): an (M,N) array of integer values denoting
@@ -60,6 +60,14 @@ def decode_segmap(label_mask, dataset, plot=False, saved_path = None, target = N
         plt.figure()
         plt.subplot(1,2,1)
         plt.imshow(trgb)
+        plt.subplot(1,2,2)
+        plt.imshow(rgb)
+    elif isinstance(image, np.ndarray):
+        plt.figure()
+        plt.subplot(1,2,1)
+        image += rgb
+        image[target == 0, :] /= 2
+        plt.imshow(image)
         plt.subplot(1,2,2)
         plt.imshow(rgb)
     else:

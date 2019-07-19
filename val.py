@@ -22,31 +22,19 @@ class Trainer(object):
     def __init__(self, args):
         self.args = args 
 
-        # Define Saver 
-        self.saver = Saver(args)
-        self.saver.save_experiment_config()
-        # Define Tensorboard Summary
-        self.summary = TensorboardSummary(self.saver.experiment_dir)
-        self.writer = self.summary.create_summary()
-        
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
         self.train_loader, self.val_loader, self.test_loader, self.nclass_pixel, self.nclass_scene = make_data_loader(args, **kwargs)
 
         
+        self.saved_index = 0
         # Define network
         if args.checkname == 'erfnet':
             model = ERFNet(num_classes_pixel = self.nclass_pixel, num_classes_scene = self.nclass_scene,multitask = self.args.multitask)
         elif args.checkname == 'resnet':
-            model = DeepLab(num_classes=self.nclass_pixel, backbone = 'resnet', output_stride=16)
+            model = DeepLab(num_classes=self.nclass_pixel, backbone = 'resnet', output_stride=8)
         elif args.checkname == 'mobilenet':
             model = DeepLab(num_classes=self.nclass_pixel, backbone = 'mobilenet', output_stride=16)
-
-        # Define Optimizer
-        optimizer = torch.optim.SGD(model.parameters(), lr = args.lr, momentum=args.momentum,
-                                    weight_decay=args.weight_decay, nesterov=args.nesterov)
-
-        # Define Criterion
         # whether to use class balanced weights
         if args.use_balanced_weights:
             classes_weights_path = os.path.join(Path.db_root_dir(args.dataset), args.dataset+'_classes_weights.npy')
@@ -62,15 +50,10 @@ class Trainer(object):
 
         self.criterion_uncertainty = LossWithUncertainty().cuda() #########################
 
-        self.model, self.optimizer = model, optimizer
+        self.model = model
         
         # Define Evaluator
         self.evaluator = Evaluator(self.nclass_pixel)
-        # Define lr scheduler
-        self.scheduler = LR_Scheduler(args.lr_scheduler, args.lr,
-                                            args.epochs, len(self.train_loader))
-
-        
 
         # Using cuda
         if args.cuda:
@@ -89,114 +72,54 @@ class Trainer(object):
                 self.model.module.load_state_dict(checkpoint['state_dict'])
             else:
                 self.model.load_state_dict(checkpoint['state_dict'])
-            if not args.ft:
-                self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.best_pred = checkpoint['best_pred']
             print("=> loaded checkpoint '{}' (epoch{})"
                   .format(args.resume, checkpoint['epoch']))
 
-        # Clear start epoch if fine-tuning
-        if args.ft:
-            args.start_epoch = 0
-
-    def training(self, epoch):
-        train_loss = 0.0
-        self.model.train()
-        tbar = tqdm(self.train_loader)
-        num_img_tr = len(self.train_loader)
-        for i, sample in enumerate(tbar):
-            image, target = sample['image'], sample['label']
-            if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
-            self.scheduler(self.optimizer, i, epoch, self.best_pred)
-            self.optimizer.zero_grad()
-            
-            output, output_road = self.model(image)
-
-            if output_road != None:
-                pass  #need cross-entropy loss for scene classification
-
-            loss = self.criterion(output, target)
-            loss = self.criterion_uncertainty(loss) ################################
-            loss.backward()
-
-            self.optimizer.step()
-            train_loss += loss.item()
-            tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
-            self.writer.add_scalar('train/total_loss_iter', loss.item(), i + num_img_tr * epoch)
-
-            # Show 10 * 3 inference results each epoch
-            if i % (num_img_tr // 10) == 0:
-                global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, image, target, output, global_step)
-
-        self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
-        print('Loss: %.3f' % train_loss)
-
-        if self.args.no_val:
-            # save checkpoint every epoch
-            is_best = False
-            self.saver.save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
-                'optimizer': self.optimizer.state_dict(),
-                'best_pred': self.best_pred,
-
-            }, is_best)
-
-
-    def validation(self, epoch):
+    def write_val(self):
         self.model.eval()
         self.evaluator.reset()
         tbar = tqdm(self.val_loader, desc='\r')
-        test_loss = 0.0
+        total_time = 0.0
         for i, sample in enumerate(tbar):
             image, target = sample['image'], sample['label']
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
+                start = time.time()
                 output, output_road = self.model(image)
+                end = time.time()
+                total_time += (end - start) * 1000
             if output_road != None:
                 pass
+            label_masks = torch.max(output, 1)[1].detach().cpu().numpy()
+            targets = target.detach().cpu().numpy()
+            #print(targets.shape) 
+            for idx, label_mask in enumerate(label_masks):     
+                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = self.args.saved_path + "/%(idx)05d.png" % {'idx':self.saved_index}, target = targets[idx])
+                self.saved_index += 1
 
-            loss = self.criterion(output, target)
-            loss = self.criterion_uncertainty(loss) ################################
-  
-            test_loss += loss.item()
-            tbar.set_description('Test loss: %.3f' % (test_loss / (i + 1)))
-            pred = output.data.cpu().numpy()
-            target = target.cpu().numpy()
-            pred = np.argmax(pred, axis=1)
-            # Add batch sample into evaluator
-            self.evaluator.add_batch(target, pred)
-
-        # Fast test during the training
-        Acc = self.evaluator.Pixel_Accuracy()
-        Acc_class = self.evaluator.Pixel_Accuracy_Class()
-        mIoU = self.evaluator.Mean_Intersection_over_Union()
-        FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
-        self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
-        self.writer.add_scalar('val/mIoU', mIoU, epoch)
-        self.writer.add_scalar('val/Acc', Acc, epoch)
-        self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
-        self.writer.add_scalar('val/fwIoU', FWIoU, epoch)
-        print('Validation:')
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
-        print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
-        print('Loss: %.3f' % test_loss)
-
-        new_pred = mIoU
-        if new_pred > self.best_pred:
-            is_best = True
-            self.best_pred = new_pred
-
-            self.saver.save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
-                'optimizer': self.optimizer.state_dict(),
-                'best_pred': self.best_pred,
-            }, is_best)
+    def time_val(self):
+        self.model.eval()
+        self.evaluator.reset()
+        length = len(self.val_loader)
+        print("length: ", length)
+        tbar = tqdm(self.val_loader, desc='\r')
+        total_time = 0.0
+        for i, sample in enumerate(tbar):
+            image, target = sample['image'], sample['label']
+            if self.args.cuda:
+                image, target = image.cuda(), target.cuda()
+            with torch.no_grad():
+                start = time.time()
+                output, output_road = self.model(image)
+                end = time.time()
+                total_time += (end - start) * 1000
+            if output_road != None:
+                pass
+            if i == 500:
+                break;
+        print("average infer time per batch", total_time / length * 20.0, 'ms')
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
@@ -219,11 +142,7 @@ def main():
                         help='output image height')
     
     parser.add_argument('--multitask', type=bool, default=False,
-                        help='whether to do multi-task (default: auto)')
-    parser.add_argument('--sync-bn', type=bool, default=None,
-                        help='whether to use sync bn (default: auto)')
-    parser.add_argument('--freeze-bn', type=bool, default=False,
-                         help='whether to freeze bn parameters (default: False)')
+                         help='whether to do multi-task (default: auto)')
     parser.add_argument('--loss-type', type=str, default='ce',
                         choices=['ce', 'focal'],
                         help='loss func type (default: ce)')
@@ -287,11 +206,6 @@ def main():
         except ValueError:
             raise ValueError('Argument --gpu_ids must be a comma-separated list of integers only')
 
-    if args.sync_bn is None:
-        if args.cuda and len(args.gpu_ids) > 1:
-            args.sync_bn = True
-        else:
-            args.sync_bn = False
 
     # default settings for epochs, batch_size and lr
     if args.epochs is None:
@@ -314,19 +228,14 @@ def main():
 
 
     if args.checkname is None:
-        args.checkname = 'lane'
+        args.checkname = 'lane-erfnet'
     print(args)
     torch.manual_seed(args.seed)
     trainer = Trainer(args)
-    if not args.write_val:
-        print('Starting Epoch:', trainer.args.start_epoch)
-        print('Total Epoches:', trainer.args.epochs)
-        for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
-            trainer.training(epoch)
-            if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
-                trainer.validation(epoch)
-
-        trainer.writer.close()
+    if args.write_val:
+        trainer.write_val()
+    else:
+        trainer.time_val()
 
 if __name__ == "__main__":
    main()

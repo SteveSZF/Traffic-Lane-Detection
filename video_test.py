@@ -24,10 +24,13 @@ class Test(object):
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
         self.test_loader, self.nclass_pixel, self.nclass_scene = make_data_loader(args, **kwargs)
         
-        self.saved_index = 0
         # Define network
-        model = ERFNet(num_classes_pixel = self.nclass_pixel, num_classes_scene = self.nclass_scene,multitask = self.args.multitask)
-
+        if args.checkname == 'erfnet':
+            model = ERFNet(num_classes_pixel = self.nclass_pixel, num_classes_scene = self.nclass_scene,multitask = self.args.multitask)
+        elif args.checkname == 'resnet':
+            model = DeepLab(num_classes=self.nclass_pixel, backbone = 'resnet', output_stride=16) 
+        elif args.checkname == 'mobilenet':
+            model = DeepLab(num_classes=self.nclass_pixel, backbone = 'mobilenet', output_stride=16)
         self.model = model
         
         # Using cuda
@@ -55,6 +58,7 @@ class Test(object):
         self.model.eval()
         #self.evaluator.reset()
         tbar = tqdm(self.test_loader, desc='\r')
+        saved_index = 0
         for i, sample in enumerate(tbar):
             image = sample['image']
             if self.args.cuda:
@@ -70,14 +74,15 @@ class Test(object):
             #targets = target.detach().cpu().numpy()
             #print(targets.shape) 
             for idx, label_mask in enumerate(label_masks):     
-                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = self.args.saved_path + "/%(idx)05d.png" % {'idx':self.saved_index}, image = image[idx])
-                self.saved_index += 1
+                decode_segmap(label_mask, dataset=self.args.dataset, saved_path = self.args.saved_path + "/%(idx)05d.png" % {'idx':saved_index}, image = image[idx])
+                saved_index += 1
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch Lane Detection")
     parser.add_argument('--dataset', type=str, default='bdd100k',
                         choices=['bdd100k'],
                         help='dataset name (default: bdd100k)')
+
     parser.add_argument('--workers', type=int, default=4,
                         metavar='N', help='dataloader threads')
     parser.add_argument('--base-w', type=int, default=960,
@@ -106,6 +111,8 @@ def main():
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
     # checking point
+    parser.add_argument('--checkname', type=str, default=None,
+                        help='set the checkpoint name')
     parser.add_argument('--resume', type=str, default=None,
                         help='put the path to resuming file if needed')
     parser.add_argument('--write-val', action='store_true', default=False,

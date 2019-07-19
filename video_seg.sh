@@ -1,1 +1,1 @@
-python video_test.py --batch-size 16 --gpu-ids 0,1,2,3 --resume run/bdd100k/erfnet.bak/experiment_10/checkpoint.pth.tar --write-val --video /workspace/Videos/video_lane_test/pandora_boyuan.avi --saved-path /workspace/Videos/video_lane_test/seg_result 
+python video_test.py --batch-size 16 --gpu-ids 0,1,2,3 --resume run/bdd100k/erfnet/experiment_10/checkpoint.pth.tar --write-val --checkname erfnet --video /workspace/Videos/video_lane_test/pandora_boyuan.avi --saved-path /workspace/Videos/video_lane_test/seg_result 

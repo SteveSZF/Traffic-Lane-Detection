@@ -13,10 +13,11 @@
 ![image](https://github.com/SteveSZF/Traffic-Lane-Detection/blob/master/a.jpg)
 ![image](https://github.com/SteveSZF/Traffic-Lane-Detection/blob/master/d.jpg)  
 
-|模型         | 单帧速度（640x480）           | mIoU  |  
+|模型         | 单帧前传速度（640x480）           | mIoU  |  
 |:-------------:|:-------------:|:-----:|  
 | erfnet      | 18.98ms | 75.44% |
 | resnet101-deeplabv3+      | 26.92ms      |   87.21% |
 | mobilenetv2-deeplabv3+ | 17.73ms      |    76.73% |
 | mobilenetv2-focal-loss-deeplabv3+ | 17.73ms      |    68.10% |
+| resnet18-bisenet | 7.768ms      |    80.32% |
 

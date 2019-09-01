@@ -19,5 +19,5 @@
 | resnet101-deeplabv3+      | 26.92ms      |   87.21% |
 | mobilenetv2-deeplabv3+ | 17.73ms      |    76.73% |
 | mobilenetv2-focal-loss-deeplabv3+ | 17.73ms      |    68.10% |
-| resnet18-bisenet | 7.68ms      |    80.32% |
+| resnet18-bisenet | 7.68ms      |    76.32% |
 | ENet | 15.14ms      |    81.32% |
